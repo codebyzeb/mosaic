@@ -206,46 +206,6 @@ class WordNetwork:
             # Add link for every node whose context overlaps at least 20%
             node_a.generative_links = [nodes_with_contexts[j] for j in range(num_nodes) if len(context_a & contexts[j]) > (length_a + lengths[j]) * 0.2]   
 
-    def make_generative_links_new(self):
-        nodes = self.root.get_all_nodes()[1:] # don't link to root
-        num_nodes = len(nodes)
-
-        contexts = []
-        for i, node in enumerate(nodes):
-            node.generative_links = []
-            contexts.append(node.get_contexts())
-
-        # Get vocabulary and create sparse representation of each context
-        indptr = [0]
-        indices = []
-        data = []
-        vocabulary = {}
-        for context in contexts:
-            for term in context:
-                index = vocabulary.setdefault(term, len(vocabulary))
-                indices.append(index)
-                data.append(1)
-            indptr.append(len(indices))
-        if len(data) == 0:
-            return        
-        contexts_array = csr_matrix((data, indices, indptr), dtype=np.uint8)
-        context_lengths_vector = contexts_array.sum(axis=1).A[:,0]
-        join_context_lengths_array = 1/np.add.outer(context_lengths_vector, context_lengths_vector.T)
-        overlap_length_array = contexts_array @ contexts_array.T
-        overlap_length_array.setdiag(0)
-        overlap_length_array.eliminate_zeros()
-        temp1 = overlap_length_array.multiply(join_context_lengths_array)
-        temp2 = temp1 > 0.2
-        connections_array = csr_matrix(temp2)
-        print("shapes:", contexts_array.shape, join_context_lengths_array.shape, connections_array.shape)
-
-        for i in tqdm (range (num_nodes), desc="Processing Nodes..."):
-            row = connections_array[i]
-            node_a = nodes[i]
-            ids = row.indices
-            for id in ids:
-                node_a.generative_links.append(nodes[id])
-
 from dataset import DataSet
 
 data = DataSet("data/corpora/aochildes_under3_adult.txt")

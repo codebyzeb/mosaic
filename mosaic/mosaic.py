@@ -56,18 +56,18 @@ class Node:
             contexts.append(backward_context)
         return set(contexts)
 
-    def get_max_phrase_length(self, depth=0) -> int:
+    def get_max_utterance_length(self, depth=0) -> int:
         if len(self.children) == 0:
             return depth
-        return max([child.get_max_phrase_length(depth+1) for child in self.children.values()])
+        return max([child.get_max_utterance_length(depth+1) for child in self.children.values()])
 
     def get_total_nodes(self) -> int: 
         return sum([child.get_total_nodes() for child in self.children.values()]) + 1
 
-    def get_total_phrases(self) -> int:
+    def get_total_utterances(self) -> int:
         if not self.children:
             return 1
-        return sum([child.get_total_phrases() for child in self.children.values()])
+        return sum([child.get_total_utterances() for child in self.children.values()])
 
     def get_total_generative_links(self) -> int:
         return sum([child.get_total_generative_links() for child in self.children.values()]) + len(self.generative_links)
@@ -130,7 +130,7 @@ class WordNetwork:
                     break
             
             self.num_utterances_seen += 1
-        self.make_generative_links()
+        self.make_generative_links_2()
 
     def visualise(self):
         g = nx.DiGraph()
@@ -149,7 +149,7 @@ class WordNetwork:
         nx.draw_networkx(g, pos, with_labels = True)
         plt.plot()
 
-    def get_mean_phrase_length(self) -> float : 
+    def get_mean_utterance_length(self) -> float : 
         lengths = []
 
         def get_lengths(parent : Node, depth):
@@ -164,12 +164,15 @@ class WordNetwork:
 
     def print_stats(self):
         print("Number of nodes:", self.root.get_total_nodes())
-        print("Number of phrases:", self.root.get_total_phrases())
-        print("Mean phrase length:",self.get_mean_phrase_length())
-        print("Maximum phrase length:", self.root.get_max_phrase_length())
+        print("Number of utterances:", self.root.get_total_utterances())
+        print("Mean utterance length:",self.get_mean_utterance_length())
+        print("Maximum utterance length:", self.root.get_max_utterance_length())
         print("Number of generative links:", self.root.get_total_generative_links())
 
-    def make_generative_links(self):
+    def make_generative_links_using_node_contexts(self):
+        """ Creates links between nodes that share similar contexts (compares each node's context to every other node's context).
+        E.g. the context of each occurrence of "him" is treated separately, not combined into one joint context. """
+
         nodes = self.root.get_all_nodes()[1:] # don't link to root
 
         contexts = []
@@ -178,7 +181,7 @@ class WordNetwork:
         num_nodes = 0
 
         vocab = {}
-        word_key = 0
+        phrase_key = 0
 
         # Get all nodes with contexts that contain more than 2 words and clear current generative links
         # Contexts are converted to lists of vocab indices for efficiency in the overlap calculation
@@ -189,11 +192,11 @@ class WordNetwork:
             length = len(context)
             if length <= 2:
                 continue
-            for word in context:
-                if not word in vocab:
-                    vocab[word] = word_key
-                    word_key += 1
-            contexts.append(set([vocab[word] for word in context]))
+            for phrase in context:
+                if not phrase in vocab:
+                    vocab[phrase] = phrase_key
+                    phrase_key += 1
+            contexts.append(set([vocab[phrase] for phrase in context]))
             nodes_with_contexts.append(node)
             lengths.append(length)
             num_nodes += 1
@@ -203,17 +206,60 @@ class WordNetwork:
             length_a = lengths[i]
             context_a = contexts[i]
             # Add link for every node whose context overlaps at least 20%
-            # node_a.generative_links = [nodes_with_contexts[j] for j in range(num_nodes)
-            #    if node_a != nodes_with_contexts[j] and 
-            #    len(context_a & contexts[j]) > (length_a + lengths[j]) * 0.2] 
-            for j in range(num_nodes):
-                node_b = nodes_with_contexts[j]
-                if node_a == node_b:
-                    continue
-                context_b = contexts[j]
-                length_b = lengths[j]
-                if len(context_a & context_b) > (length_a + length_b) * 0.2:
-                    node_a.generative_links.append(node_b)
+            node_a.generative_links = [nodes_with_contexts[j] for j in range(num_nodes)
+               if node_a != nodes_with_contexts[j] and 
+               len(context_a & contexts[j]) > (length_a + lengths[j]) * 0.2] 
+
+    def make_generative_links_using_joint_contexts(self):
+        """ Creates links between nodes that share similar contexts by combining the contexts of ALL occurrences of the phrase
+        encoded by that node within the network. E.g. the joint contexts (words that appear before and after) of every occurrence
+        of "her" is compared to the joint contexts of every occurrence of "him" """
+
+        nodes = self.root.get_all_nodes()[1:] # don't link to root
+
+        phrase_to_context = {}
+        phrase_to_nodes = {}
+        phrase_to_number = {}
+        phrase_key = 0
+        num_unique_phrases = 0
+
+        for i, node in enumerate(nodes):
+            # Clear all previous generative links
+            node.generative_links = []
+            context = node.get_contexts()
+
+            if len(context) < 2:
+                continue
+            
+            for phrase in context:
+                if not phrase in phrase_to_number:
+                    phrase_to_number[phrase] = phrase_key
+                    phrase_key += 1
+            
+            if not node.phrase in phrase_to_context:
+                phrase_to_context[node.phrase] = set()
+                phrase_to_nodes[node.phrase] = []
+                num_unique_phrases += 1
+            
+            phrase_to_nodes[node.phrase].append(node)
+            # Contexts are sets, so we're only looking at types, not tokens
+            phrase_to_context[node.phrase].update([phrase_to_number[phrase] for phrase in context])
+        
+        phrase_to_context_length = {}
+        for phrase in phrase_to_context:
+            phrase_to_context_length[phrase] = len(phrase_to_context[phrase])
+
+        for phrase in tqdm (phrase_to_context, desc="Processing Phrases..."):
+            context = phrase_to_context[phrase]
+            context_length = len(context)
+            # Get all phrases whose context overlaps at least 20%
+            similar_phrases = [other_phrase for other_phrase in phrase_to_context
+                               if other_phrase != phrase and
+                               len(context & phrase_to_context[other_phrase]) > (context_length + phrase_to_context_length[other_phrase]) * 0.2]
+            # Add links between similar phrases
+            for other_phrase in similar_phrases:
+                for node_a in phrase_to_nodes[phrase]:
+                    node_a.generative_links = phrase_to_nodes[other_phrase]
 
 from dataset import DataSet
 

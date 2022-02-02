@@ -14,74 +14,73 @@ import matplotlib.pyplot as plt
 ROOT_LABEL = "ROOT"
 
 class Node:
-    def __init__(self, phrase : List[str], parent = None):
-        self.phrase = ' '.join(phrase)
+    def __init__(self, phrase : str, parent = None):
+        self.phrase = phrase
         self.parent = parent
-        self.branches = {}
+        self.children = {}
         self.generative_links = []
 
-    def __contains__(self, phrase : List[str]) -> bool:
-        if len(phrase) == 0:
+    def __contains__(self, utterance : List[str]) -> bool:
+        if len(utterance) == 0:
             return True
-        if len(phrase) == 1:
-            return phrase[0] in self.branches
-        if not phrase[0] in self.branches:
+        if len(utterance) == 1:
+            return utterance[0] in self.children
+        if not utterance[0] in self.children:
             return False
-        return phrase[1:] in self.branches[phrase[0]] 
+        return utterance[1:] in self.children[utterance[0]] 
 
-    def has_branch(self, branch : str) -> bool:
-        return branch in self.branches
+    def has_children(self) -> bool:
+        if self.children:
+            return True
+        return False
+
+    def has_child(self, child : str) -> bool:
+        return child in self.children
+
+    def get_children(self):
+        return list(self.children.values())
 
     def __str__(self) -> str:
-        return '({})'.format(','.join([key+str(self.branches[key]) for key in self.branches])) if len(self.branches) > 0 else ""
+        return '({})'.format(','.join([child.phrase+str(child) for child in self.get_children()])) if len(self.children) > 0 else ""
 
-    def add_phrase(self, phrase : List[str], position : int = 0):
-        if not phrase[position] in self.branches:
-            new_node = Node(phrase[:position+1])
-            self.branches[phrase[position]] = new_node
-        if position == len(phrase)-1:
-            return
-        else:
-            self.branches[phrase[position]].add_phrase(phrase, position+1)
-
-    def add_node(self, branch : str, phrase : List[str]):
-        if not branch in self.branches:
+    def add_node(self, phrase : str):
+        if not phrase in self.children:
             new_node = Node(phrase, self)
-            self.branches[branch] = new_node
+            self.children[phrase] = new_node
 
     def get_contexts(self) -> Set[str]:
         """ Returns the words that directly precede or follow this node """
-        contexts = list(self.branches.keys())
+        contexts = [child.phrase for child in self.get_children()]
         if self.parent and self.parent.phrase != ROOT_LABEL:
-            backward_context = self.parent.phrase.split(' ')[-1]
+            backward_context = self.parent.phrase
             contexts.append(backward_context)
         return set(contexts)
 
     def get_max_phrase_length(self, depth=0) -> int:
-        if len(self.branches) == 0:
+        if len(self.children) == 0:
             return depth
-        return max([child.get_max_phrase_length(depth+1) for child in self.branches.values()])
+        return max([child.get_max_phrase_length(depth+1) for child in self.children.values()])
 
     def get_total_nodes(self) -> int: 
-        return sum([child.get_total_nodes() for child in self.branches.values()]) + 1
+        return sum([child.get_total_nodes() for child in self.children.values()]) + 1
 
     def get_total_phrases(self) -> int:
-        if not self.branches:
+        if not self.children:
             return 1
-        return sum([child.get_total_phrases() for child in self.branches.values()])
+        return sum([child.get_total_phrases() for child in self.children.values()])
 
     def get_total_generative_links(self) -> int:
-        return sum([child.get_total_generative_links() for child in self.branches.values()]) + len(self.generative_links)
+        return sum([child.get_total_generative_links() for child in self.children.values()]) + len(self.generative_links)
 
     def get_all_nodes(self):
         nodes = [self]
-        for child in self.branches.values():
+        for child in self.children.values():
             nodes.extend(child.get_all_nodes())
         return nodes
 
 class WordNetwork:
     def __init__(self, verbose : bool = False, calculate_ncp = True, corpus_size : int = math.inf, m = 20):
-        self.root = Node(['ROOT'])
+        self.root = Node('ROOT')
         self.verbose = verbose
         self.calculate_ncp = calculate_ncp
         self.corpus_size = corpus_size
@@ -102,32 +101,32 @@ class WordNetwork:
         if random.random() <= self.get_node_creation_probability(1):
             if self.verbose:
                 print("adding primitive node: ", word)
-            self.root.add_node(word, [word])
+            self.root.add_node(word)
 
-    def add_phrase(self, phrase : List[str]):
+    def add_utterance(self, utterance : List[str]):
         if self.verbose:
-            print("adding phrase:", phrase)
+            print("adding phrase:", utterance)
         current_node = self.root
-        for position, word in enumerate(phrase):
-            distance = len(phrase) - position
-            if not current_node.has_branch(word):
+        for position, phrase in enumerate(utterance):
+            distance = len(utterance) - position
+            if not current_node.has_child(phrase):
                 if random.random() <= self.get_node_creation_probability(distance):
-                    current_node.add_node(word, phrase[:position+1])
+                    current_node.add_node(phrase)
                 else:
                     break
-            current_node = current_node.branches[word]
+            current_node = current_node.children[phrase]
 
     def process_utterances(self, utterances : List[List[str]]):
         for utterance in utterances:
             for i in range(len(utterance)):
-                phrase = utterance[-i-1:]
+                sub_utterance = utterance[-i-1:]
                 # create primitive node for unseen words
-                if not self.root.has_branch(phrase[0]):
-                    self.add_primitive_node(phrase[0])
+                if not self.root.has_child(sub_utterance[0]):
+                    self.add_primitive_node(sub_utterance[0])
                     break
                 # create phrase encoding for unseen phrase
-                elif not phrase in self.root:
-                    self.add_phrase(phrase)
+                elif not sub_utterance in self.root:
+                    self.add_utterance(sub_utterance)
                     break
             
             self.num_utterances_seen += 1
@@ -136,13 +135,13 @@ class WordNetwork:
     def visualise(self):
         g = nx.DiGraph()
  
-        def add_branches(parent : Node):
-            for branch in parent.branches:
-                child = parent.branches[branch]
-                g.add_edge(parent.phrase, child.phrase, label=branch)
-                add_branches(child)
-            for generative_link in parent.generative_links:
-                g.add_edge(parent.phrase, generative_link.phrase, weight=3)
+        def add_branches(parent : Node, full_phrase = ""):
+            for child in parent.get_children():
+                phrase = child.phrase
+                g.add_edge(full_phrase, full_phrase + " " + phrase, label=phrase)
+                add_branches(child, full_phrase + " " + phrase)
+            #for generative_link in parent.generative_links:
+            #    g.add_edge(parent.phrase, full_phrase + " " + generative_link.phrase, weight=3)
         
         add_branches(self.root)
 
@@ -154,9 +153,9 @@ class WordNetwork:
         lengths = []
 
         def get_lengths(parent : Node, depth):
-            if len(parent.branches) == 0:
+            if not parent.has_children():
                 lengths.append(depth)
-            for child in parent.branches.values():
+            for child in parent.get_children():
                 get_lengths(child, depth+1)
 
         get_lengths(self.root, 0)
@@ -204,7 +203,17 @@ class WordNetwork:
             length_a = lengths[i]
             context_a = contexts[i]
             # Add link for every node whose context overlaps at least 20%
-            node_a.generative_links = [nodes_with_contexts[j] for j in range(num_nodes) if len(context_a & contexts[j]) > (length_a + lengths[j]) * 0.2]   
+            # node_a.generative_links = [nodes_with_contexts[j] for j in range(num_nodes)
+            #    if node_a != nodes_with_contexts[j] and 
+            #    len(context_a & contexts[j]) > (length_a + lengths[j]) * 0.2] 
+            for j in range(num_nodes):
+                node_b = nodes_with_contexts[j]
+                if node_a == node_b:
+                    continue
+                context_b = contexts[j]
+                length_b = lengths[j]
+                if len(context_a & context_b) > (length_a + length_b) * 0.2:
+                    node_a.generative_links.append(node_b)
 
 from dataset import DataSet
 

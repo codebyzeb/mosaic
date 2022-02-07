@@ -1,15 +1,12 @@
-from platform import node
-from typing import Set, List, Optional, Tuple
 import math, random
+from typing import Set, List, Optional, Tuple
 from tqdm import tqdm
-from multiprocessing import Pool
-import numpy as np
-from scipy.sparse import csr_matrix
-import time
 
 # visualisation
 import networkx as nx
 import matplotlib.pyplot as plt
+
+from params import Params
 
 ROOT_LABEL = "ROOT"
 
@@ -77,20 +74,17 @@ class Node:
         for child in self.children.values():
             nodes.extend(child.get_all_nodes())
         return nodes
-
 class WordNetwork:
-    def __init__(self, verbose : bool = False, corpus_size = math.inf, calculate_ncp = True, m = 20):
+    def __init__(self, verbose : bool = False, params : Params = None):
         self.root = Node("ROOT")
         self.num_utterances_seen = 0
         self.verbose = verbose
 
-        self.corpus_size = corpus_size
-        self.calculate_ncp = calculate_ncp
-        self.m = m
+        self.params = params if params else Params()
 
     def get_node_creation_probability(self, distance_to_end_of_utterance):
-        if self.calculate_ncp:
-            ncp = pow((1 / (1+math.exp(self.m - self.num_utterances_seen/self.corpus_size))), math.sqrt(distance_to_end_of_utterance))
+        if self.params.calculate_ncp:
+            ncp = pow((1 / (1+math.exp(self.params.m - self.num_utterances_seen/self.params.corpus_size))), math.sqrt(distance_to_end_of_utterance))
             return ncp
         else:
             return 1
@@ -118,6 +112,12 @@ class WordNetwork:
             current_node = current_node.children[phrase]
 
     def process_utterances(self, utterances : List[List[str]]):
+        # If the corpus size hasn't been set in advance, set it now
+        if not self.params.corpus_size:
+            self.params.corpus_size = len(utterances)
+            if self.verbose:
+                print("Setting corpus_size parameter to {}".format(self.params.corpus_size))
+        
         for utterance in utterances:
             for i in range(len(utterance)):
                 sub_utterance = utterance[-i-1:]
@@ -131,7 +131,10 @@ class WordNetwork:
                     break
             
             self.num_utterances_seen += 1
-        self.make_generative_links_using_node_contexts()
+        if self.params.generative_links_using_joint_contexts:
+            self.make_generative_links_using_joint_contexts()
+        else:
+            self.make_generative_links_using_node_contexts()
 
     def visualise(self):
         g = nx.DiGraph()
@@ -181,8 +184,8 @@ class WordNetwork:
         print("Number of nodes:", num_nodes)
         print("Number of generative links:", num_generative_links)
         print("Number of utterances:", num_utterances)
-        print("Mean utterance length:", mean_utterance_length)
-        print("Proportion of novel utterances:", proportion_novel_utterances)
+        print("Mean utterance length: {0:.3g}".format(mean_utterance_length))
+        print("Proportion of novel utterances: {0:.3g}".format(proportion_novel_utterances))
 
     def make_generative_links_using_node_contexts(self):
         """ Creates links between nodes that share similar contexts (compares each node's context to every other node's context).
@@ -216,14 +219,14 @@ class WordNetwork:
             lengths.append(length)
             num_nodes += 1
 
-        for i in tqdm (range (num_nodes), desc="Processing Nodes..."):
+        for i in tqdm (range (num_nodes), desc="Calculating Generative Links for Nodes...", disable=self.params.hide_progress_bar):
             node_a = nodes_with_contexts[i]
             length_a = lengths[i]
             context_a = contexts[i]
             # Add link for every node whose context overlaps at least 20%
             node_a.generative_links = [nodes_with_contexts[j] for j in range(num_nodes)
                if node_a != nodes_with_contexts[j] and 
-               len(context_a & contexts[j]) > (length_a + lengths[j]) * 0.2] 
+               len(context_a & contexts[j]) > (length_a + lengths[j]) * self.params.overlap_threshold] 
 
     def make_generative_links_using_joint_contexts(self):
         """ Creates links between nodes that share similar contexts by combining the contexts of ALL occurrences of the phrase
@@ -264,13 +267,13 @@ class WordNetwork:
         for phrase in phrase_to_context:
             phrase_to_context_length[phrase] = len(phrase_to_context[phrase])
 
-        for phrase in tqdm (phrase_to_context, desc="Processing Phrases..."):
+        for phrase in tqdm (phrase_to_context, desc="Processing Phrases...", disable=self.params.hide_progress_bar):
             context = phrase_to_context[phrase]
             context_length = len(context)
             # Get all phrases whose context overlaps at least 20%
             similar_phrases = [other_phrase for other_phrase in phrase_to_context
                                if other_phrase != phrase and
-                               len(context & phrase_to_context[other_phrase]) > (context_length + phrase_to_context_length[other_phrase]) * 0.2]
+                               len(context & phrase_to_context[other_phrase]) > (context_length + phrase_to_context_length[other_phrase]) * self.params.overlap_threshold]
             # Add links between similar phrases
             for other_phrase in similar_phrases:
                 for node_a in phrase_to_nodes[phrase]:

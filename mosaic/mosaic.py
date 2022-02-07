@@ -41,7 +41,7 @@ class Node:
         return list(self.children.values())
 
     def __str__(self) -> str:
-        return '({})'.format(','.join([child.phrase+str(child) for child in self.get_children()])) if len(self.children) > 0 else ""
+        return "({})".format(",".join([child.phrase+str(child) for child in self.get_children()])) if len(self.children) > 0 else ""
 
     def add_node(self, phrase : str):
         if not phrase in self.children:
@@ -79,12 +79,13 @@ class Node:
         return nodes
 
 class WordNetwork:
-    def __init__(self, verbose : bool = False, calculate_ncp = True, corpus_size : int = math.inf, m = 20):
-        self.root = Node('ROOT')
-        self.verbose = verbose
-        self.calculate_ncp = calculate_ncp
-        self.corpus_size = corpus_size
+    def __init__(self, verbose : bool = False, corpus_size = math.inf, calculate_ncp = True, m = 20):
+        self.root = Node("ROOT")
         self.num_utterances_seen = 0
+        self.verbose = verbose
+
+        self.corpus_size = corpus_size
+        self.calculate_ncp = calculate_ncp
         self.m = m
 
     def get_node_creation_probability(self, distance_to_end_of_utterance):
@@ -130,7 +131,7 @@ class WordNetwork:
                     break
             
             self.num_utterances_seen += 1
-        self.make_generative_links_using_joint_contexts()
+        self.make_generative_links_using_node_contexts()
 
     def visualise(self):
         g = nx.DiGraph()
@@ -162,12 +163,26 @@ class WordNetwork:
 
         return sum(lengths) / len(lengths) if len(lengths) > 0 else 0
 
-    def print_stats(self):
-        print("Number of nodes:", self.root.get_total_nodes())
-        print("Number of utterances:", self.root.get_total_utterances())
-        print("Mean utterance length:",self.get_mean_utterance_length())
-        print("Maximum utterance length:", self.root.get_max_utterance_length())
-        print("Number of generative links:", self.root.get_total_generative_links())
+    def print_stats(self, include_generated_utterances_in_stats=True):
+        num_nodes = self.root.get_total_nodes()
+        num_generative_links = self.root.get_total_generative_links()
+        if not include_generated_utterances_in_stats:
+            num_utterances = self.root.get_total_utterances()
+            mean_utterance_length = self.get_mean_utterance_length()
+            proportion_novel_utterances = 0
+        else:
+            learned_utterances = self.get_learned_utterances()
+            generated_utterances = self.get_generated_utterances()
+            all_utterances = learned_utterances | generated_utterances
+            num_utterances = len(all_utterances)
+            mean_utterance_length = sum([utterance.count(" ") + 1 for utterance in all_utterances]) / num_utterances if num_utterances > 0 else 0
+            proportion_novel_utterances = (num_utterances - len(learned_utterances)) / num_utterances if num_utterances > 0 else 0
+
+        print("Number of nodes:", num_nodes)
+        print("Number of generative links:", num_generative_links)
+        print("Number of utterances:", num_utterances)
+        print("Mean utterance length:", mean_utterance_length)
+        print("Proportion of novel utterances:", proportion_novel_utterances)
 
     def make_generative_links_using_node_contexts(self):
         """ Creates links between nodes that share similar contexts (compares each node's context to every other node's context).
@@ -260,3 +275,32 @@ class WordNetwork:
             for other_phrase in similar_phrases:
                 for node_a in phrase_to_nodes[phrase]:
                     node_a.generative_links = phrase_to_nodes[other_phrase]
+
+    def get_learned_utterances(self):
+        utterances = set()
+        def get_utterances(node : Node, preceding : str = ""):
+            utterance = preceding + " " + node.phrase if preceding else node.phrase
+            if not node.children:
+                utterances.add(utterance)
+            for child in node.get_children():
+                get_utterances(child, utterance)
+        for child in self.root.get_children():
+            get_utterances(child)
+        return utterances
+
+    def get_generated_utterances(self):
+        utterances = set()
+        def get_utterances(node : Node, preceding : str = "", generated : bool = False):
+            utterance = preceding + " " + node.phrase if preceding else node.phrase
+            # Only add utterances that have passed through a generative link
+            if not node.children and generated:
+                utterances.add(utterance)
+            for child in node.get_children():
+                get_utterances(child, utterance, generated)
+            # TODO: Once this condition is removed, there's the possibility of loops
+            if not generated:
+                for link in node.generative_links:
+                    get_utterances(link, preceding, True)
+        for child in self.root.get_children():
+            get_utterances(child)
+        return utterances

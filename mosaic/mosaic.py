@@ -130,7 +130,7 @@ class WordNetwork:
                     break
             
             self.num_utterances_seen += 1
-        self.make_generative_links_2()
+        self.make_generative_links_using_joint_contexts()
 
     def visualise(self):
         g = nx.DiGraph()
@@ -260,17 +260,3 @@ class WordNetwork:
             for other_phrase in similar_phrases:
                 for node_a in phrase_to_nodes[phrase]:
                     node_a.generative_links = phrase_to_nodes[other_phrase]
-
-from dataset import DataSet
-
-data = DataSet("data/corpora/aochildes_under3_adult.txt")
-print("Number of utterances:", data.size)
-random.seed(0)
-network = WordNetwork(verbose=False, calculate_ncp=True, corpus_size=data.size, m=20)
-for i in range(30):
-    if i > 15:
-        print("Iteration:",i)
-    network.process_utterances(data.utterances)
-    if i > 15:
-        network.print_stats()
-        print()
